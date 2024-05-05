@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UF2 - Viewer</title>
+    <link rel="stylesheet" href="./styles.css">
+</head>
+
+<body>
+    <header>
+        <h1>UF2 Viewer <small>[drop file here]</small></h1>
+        <input type="file" id="input-file">
+
+    </header>
+    <main id="main">
+
+    </main>
+
+    <script>
+        const families = []
+
+        // helpers
+        const formatAsHex = num => "0x" + Number(num).toString(16).padStart(8, "0")
+        const formatFamily = num => {
+            const id = formatAsHex(num)
+            const found = families.find(el => el.id === id)
+            return found?.description || id
+        }
+
+        // load families
+        fetch("https://raw.githubusercontent.com/microsoft/uf2/master/utils/uf2families.json").then(r => r.json()).then(result => {
+            console.log("families loaded!")
+            families.push(...result)
+        })
+    </script>
+    <script>
+        const main = document.getElementById("main")
+        const clearBlocks = () => {
+            main.innerHTML = ""
+        }
+        const addBlock = (info) => {
+            const template = `
+                <small>#${info.blk}</small>
+                <ul>
+                    <li><strong>Magic#0:</strong>${formatAsHex(info.magicStart0)}</li>
+                    <li><strong>Magic#1:</strong>${formatAsHex(info.magicStart1)}</li>
+                    <li><strong>Flags:</strong>${formatAsHex(info.flags)}</li>
+                    <li><strong>Address:</strong>${formatAsHex(info.addr)}</li>
+                    <li><strong># Bytes:</strong>${info.nBytes}</li>
+                    <li><strong>Seq Blk #:</strong>${info.seqBlkNum}</li>
+                    <li><strong>Total Blk #:</strong>${info.totalBlkNum}</li>
+                    <li><strong>${info.flags & 0x2000 ? "FamilyId" : "Size"}:</strong>${info.flags & 0x2000 ? formatFamily(info.fileSize) : info.fileSize}</li>
+                    <li title="Check in console: __BLOCKS__[${info.blk}]"><strong>Data:</strong>{...}</li>
+                    <li class="sm"><strong>Final Magic#:</strong>${info.magicEnd}</li>
+                </ul>`
+            const block = document.createElement("div")
+            block.classList.add("block")
+            block.innerHTML = template
+            main.appendChild(block)
+        }
+    </script>
+    <script>
+        const input = document.getElementById("input-file")
+        input.addEventListener("change", parse)
+
+        async function parse() {
+            if (!input.files[0]) {
+                alert("Missing file!")
+            } else {
+                clearBlocks()
+
+                /** @type {ArrayBuffer} */
+                const blob = await input.files[0].arrayBuffer()
+                console.log({ blob })
+                const size = blob.byteLength
+
+                const dv = new DataView(blob)
+                const blocks = []
+                for (let offset = 0, blk = 0; offset < size; offset += 512, blk++) {
+                    const magicStart0 = dv.getUint32(offset + 0, true)
+                    const magicStart1 = dv.getUint32(offset + 4, true)
+                    const flags = dv.getUint32(offset + 8, true)
+                    const addr = dv.getUint32(offset + 12, true)
+                    const nBytes = dv.getUint32(offset + 16, true)
+                    const seqBlkNum = dv.getUint32(offset + 20, true)
+                    const totalBlkNum = dv.getUint32(offset + 24, true)
+                    const fileSize = dv.getUint32(offset + 28, true)
+                    const data = Array(476).fill(0).map((_, idx) => dv.getUint8(offset + 32 + (idx)))
+                    const magicEnd = dv.getUint32(offset + 508, true)
+
+                    const errors = []
+                    if (magicStart0 !== 0x0A324655) {
+                        errors.push(`magicStart0 dont match (${magicStart0})`)
+                    }
+                    if (magicStart1 !== 0x9E5D5157) {
+                        errors.push(`magicStart1 dont match (${magicStart1})`)
+                    }
+                    if (magicEnd !== 0x0AB16F30) {
+                        errors.push(`magicEnd dont match (${magicEnd})`)
+                    }
+
+                    if (errors.length) {
+                        console.error("Errors found at block#%d", blk, errors)
+                    }
+
+                    const blockInfo = ({ blk, data, magicStart0, magicStart1, flags, addr, nBytes, seqBlkNum, totalBlkNum, fileSize, magicEnd })
+                    blocks.push(blockInfo)
+                    addBlock(blockInfo)
+                }
+
+                globalThis['__BLOCKS__'] = blocks
+                globalThis['__DATAVIEW__'] = dv
+                return { dv, blocks }
+            }
+        }
+    </script>
+</body>
+
+</html>
